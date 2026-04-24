@@ -61,7 +61,7 @@
     import { initializeApp } from 'firebase/app';
     import { getAnalytics } from 'firebase/analytics';
     import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-    import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, query, orderBy, limit, writeBatch } from 'firebase/firestore';
+    import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
     import {
       Home, ShoppingCart, ListOrdered, Utensils, Package, Tags, Users, LogOut, GripVertical,
       Plus, Trash2, Edit, Check, X, Clock, Play, Square, DollarSign, TrendingUp, AlertCircle, Activity,
@@ -69,26 +69,26 @@
     } from 'lucide-react';
 
     // --- Firebase Initialization ---
-    const firebaseConfig = {
+    // 這裡使用預設配置，實際金鑰由環境變數提供
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
       apiKey: "AIzaSyBZRWfUdwo8x8lnZtAEPVNRU-CKZyZTjdw",
       authDomain: "jsvtb-48aff.firebaseapp.com",
       projectId: "jsvtb-48aff",
       storageBucket: "jsvtb-48aff.firebasestorage.app",
       messagingSenderId: "1010311063638",
-      appId: "1:1010311063638:web:870c56def83e1de1df73f7",
-      measurementId: "G-VV0PYS1VP0"
+      appId: "1:1010311063638:web:870c56def83e1de1df73f7"
     };
 
     const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    const ROOT_COLL = 'Sunset';
-    const ROOT_DOC = 'system_data';
-
-    const getCollRef = (collName) => collection(db, ROOT_COLL, ROOT_DOC, collName);
-    const getDocRef = (collName, docId) => doc(db, ROOT_COLL, ROOT_DOC, collName, docId);
+    // --- 遵守 Canvas 安全路徑規範 ---
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'sunset-realm-app';
+    
+    // 使用合規的 Public Data 路徑
+    const getCollRef = (collName) => collection(db, 'artifacts', appId, 'public', 'data', collName);
+    const getDocRef = (collName, docId) => doc(db, 'artifacts', appId, 'public', 'data', collName, docId);
 
     const toLocalDatetime = (isoStr) => {
       const d = new Date(isoStr);
@@ -308,6 +308,7 @@
         }
       };
 
+      // --- 認證與監聽機制 (嚴格遵守 RULE 3) ---
       useEffect(() => {
         const initAuth = async () => {
           try {
@@ -316,31 +317,45 @@
           } catch (error) { console.error('Auth error:', error); }
         };
         initAuth();
-        const unsub = onAuthStateChanged(auth, (user) => { setFirebaseUser(user); setIsInitializing(false); });
+        const unsub = onAuthStateChanged(auth, (user) => { 
+          setFirebaseUser(user); 
+          setIsInitializing(false); 
+        });
         return () => unsub();
       }, []);
 
       useEffect(() => {
-        if (!firebaseUser) return;
+        if (!firebaseUser) return; // Guard 確保認證後才執行
         const unsubscribers = [];
 
-        const subscribe = (collName, key, qObj = null) => {
-          const q = qObj || getCollRef(collName);
-          const unsub = onSnapshot(q, (snapshot) => {
-            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const subscribe = (collName, key) => {
+          // 遵守 RULE 2: 不使用 orderBy 和 limit，全部撈出後在前端排序
+          const unsub = onSnapshot(getCollRef(collName), (snapshot) => {
+            let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // 針對歷史紀錄類型的資料，在記憶體中進行排序
+            if (['bar_orders', 'bar_inventory', 'bar_operation_logs'].includes(collName)) {
+              data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            }
+            
             setAllData(prev => ({ ...prev, [key]: data }));
+          }, (error) => {
+            console.error(`Error fetching ${collName}:`, error);
           });
           unsubscribers.push(unsub);
         };
 
-        subscribe('bar_users', 'users'); subscribe('bar_roles', 'roles');
-        subscribe('bar_categories', 'categories'); subscribe('bar_items', 'items');
-        subscribe('bar_tags', 'tags'); subscribe('bar_activities', 'activities');
-        subscribe('bar_ingredients', 'ingredients'); subscribe('bar_settings', 'settingsData');
-        
-        subscribe('bar_orders', 'orders', query(getCollRef('bar_orders'), orderBy('timestamp', 'desc'), limit(1500)));
-        subscribe('bar_inventory', 'inventoryLogs', query(getCollRef('bar_inventory'), orderBy('timestamp', 'desc'), limit(1000)));
-        subscribe('bar_operation_logs', 'operationLogs', query(getCollRef('bar_operation_logs'), orderBy('timestamp', 'desc'), limit(300)));
+        subscribe('bar_users', 'users'); 
+        subscribe('bar_roles', 'roles');
+        subscribe('bar_categories', 'categories'); 
+        subscribe('bar_items', 'items');
+        subscribe('bar_tags', 'tags'); 
+        subscribe('bar_activities', 'activities');
+        subscribe('bar_ingredients', 'ingredients'); 
+        subscribe('bar_settings', 'settingsData');
+        subscribe('bar_orders', 'orders');
+        subscribe('bar_inventory', 'inventoryLogs');
+        subscribe('bar_operation_logs', 'operationLogs');
 
         return () => unsubscribers.forEach(u => u());
       }, [firebaseUser]);
