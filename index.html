@@ -255,6 +255,20 @@
         } catch (e) { console.error("Logging failed", e); }
       };
 
+      const handleInitializeSystem = async () => {
+        try {
+          const roleRef = doc(getCollRef('bar_roles'), 'admin_role');
+          const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
+          await setDoc(roleRef, { name: '最高管理員', permissions: allPerms, isSystem: true });
+
+          await addDoc(getCollRef('bar_users'), { name: '宇洛', password: 'admin', role: 'admin_role', isOnline: false, lastActive: 0 });
+
+          showAlert('系統初始化成功！已經為您建立首位管理員帳號：宇洛。您現在可以選擇帳號登入了！');
+        } catch (err) {
+          showAlert('初始化失敗：' + err.message);
+        }
+      };
+
       const handleCheckout = async (orderData) => {
         try {
           const batch = writeBatch(db);
@@ -360,7 +374,15 @@
 
       if (isInitializing) return <div className="min-h-screen bg-[#1c0c27] flex items-center justify-center text-orange-400 text-2xl font-bold tracking-widest drop-shadow-[0_0_10px_rgba(249,115,22,0.8)]">SYSTEM BOOTING...</div>;
 
-      if (!appUser) return <LoginScreen users={allData.users} roles={allData.roles} onLogin={setAppUser} onGuest={() => setAppUser('guest')} />;
+      if (!appUser) return (
+        <LoginScreen 
+          users={allData.users} 
+          roles={allData.roles} 
+          onLogin={setAppUser} 
+          onGuest={() => setAppUser('guest')} 
+          onInit={() => showConfirm('確定要初始化全新資料庫並建立管理員「宇洛」嗎？', handleInitializeSystem)} 
+        />
+      );
 
       const activeUsers = allData.users.filter(u => u.isOnline && (Date.now() - u.lastActive < 30000));
       const allNavItems = [
@@ -488,7 +510,7 @@
     // VIEWS
     // ==========================================
 
-    const LoginScreen = ({ users, roles, onLogin, onGuest }) => {
+    const LoginScreen = ({ users, roles, onLogin, onGuest, onInit }) => {
       const [selectedUser, setSelectedUser] = useState(null);
       const [password, setPassword] = useState('');
       const [showPassword, setShowPassword] = useState(false);
@@ -536,7 +558,16 @@
                       );
                     })}
                   </div>
-                  {users.length === 0 && <p className="text-purple-500 text-center py-4 text-sm font-bold uppercase tracking-widest">系統初始化中...</p>}
+                  
+                  {/* 空資料庫初始化提示與按鈕 */}
+                  {users.length === 0 && (
+                    <div className="text-center py-6">
+                      <p className="text-pink-400 text-xs font-bold uppercase tracking-widest mb-4">系統尚未建立任何帳號</p>
+                      <Button onClick={onInit} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
+                        <Shield size={16}/> 點此建立管理員 (宇洛)
+                      </Button>
+                    </div>
+                  )}
                   
                   <div className="mt-8 pt-5 border-t border-purple-900/50">
                     <button
@@ -1734,14 +1765,14 @@
       };
 
       const edit = (u) => {
-        const isSys = u.name === '花大熊';
+        const isSys = u.name === '花大熊' || u.name === '宇洛';
         showEdit({
           title: isSys ? '編輯核心管理員' : '更新帳號配置',
           fields: isSys ? [{ key: 'p', label: '安全密碼', defaultValue: u.password }] : [ { key: 'n', label: '名稱', defaultValue: u.name }, { key: 'p', label: '密碼', defaultValue: u.password }, { key: 'r', label: '職位', type: 'select', defaultValue: u.role, options: roles.map(r=>({value:r.id, label:r.name})) } ],
           onSave: (v) => { if(v.n && v.n!==u.name && users.find(x=>x.name===v.n)) return showAlert("名稱重複"); updateDoc(getDocRef('bar_users', u.id), isSys ? {password:v.p} : {name:v.n, password:v.p, role:v.r}); logAction('更新帳號', u.name); }
         });
       };
-      const del = (id, n) => { if(n==='花大熊')return showAlert("拒絕存取：無法刪除核心帳號"); showConfirm(`刪除 ${n}?`, () => { deleteDoc(getDocRef('bar_users', id)); logAction('刪除帳號', n); }); };
+      const del = (id, n) => { if(n==='花大熊' || n === '宇洛')return showAlert("拒絕存取：無法刪除核心帳號"); showConfirm(`刪除 ${n}?`, () => { deleteDoc(getDocRef('bar_users', id)); logAction('刪除帳號', n); }); };
 
       return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
@@ -1770,7 +1801,7 @@
                   </div>
                   <div className="flex flex-col gap-2 flex-shrink-0">
                     <button onClick={()=>edit(u)} className="p-2 bg-[#1c0c27]/80 hover:bg-yellow-500/10 text-purple-400 hover:text-yellow-400 rounded-lg transition-colors border border-purple-900/30"><Edit size={16}/></button>
-                    {u.name!=='花大熊' && <button onClick={()=>del(u.id, u.name)} className="p-2 bg-[#1c0c27]/80 hover:bg-pink-900/30 text-purple-400 hover:text-pink-500 rounded-lg transition-colors border border-purple-900/30"><Trash2 size={16}/></button>}
+                    {(u.name!=='花大熊' && u.name !== '宇洛') && <button onClick={()=>del(u.id, u.name)} className="p-2 bg-[#1c0c27]/80 hover:bg-pink-900/30 text-purple-400 hover:text-pink-500 rounded-lg transition-colors border border-purple-900/30"><Trash2 size={16}/></button>}
                   </div>
                 </div>
               ))}
