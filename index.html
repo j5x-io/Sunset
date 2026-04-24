@@ -252,6 +252,36 @@
         } catch (e) { console.error("Logging failed", e); }
       };
 
+      // --- 系統初始化功能 (建立管理員與核心資料夾) ---
+      const handleInitializeSystem = async () => {
+        try {
+          const batch = writeBatch(db);
+          
+          // 1. 在 Sunset/main 建立系統最高權限角色
+          const roleRef = doc(getCollRef('bar_roles'));
+          const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
+          batch.set(roleRef, { name: '系統核心管理', permissions: allPerms, isSystem: true });
+
+          // 2. 在 Sunset/main 建立最高管理員帳號：宇洛 / admin
+          const userRef = doc(getCollRef('bar_users'));
+          batch.set(userRef, { 
+            name: '宇洛', 
+            password: 'admin', 
+            role: roleRef.id, 
+            isSystem: true, 
+            isOnline: false, 
+            lastActive: 0 
+          });
+
+          // 3. 送出所有建立指令
+          await batch.commit();
+          showAlert('✅ 初始化成功！已於 Sunset 資料庫建立最高權限管理員「宇洛」。請使用密碼 admin 登入。');
+        } catch (error) {
+          console.error("Init Error:", error);
+          showAlert('❌ 初始化失敗，請檢查資料庫連線權限：' + error.message);
+        }
+      };
+
       // --- 認證與監聽機制 ---
       useEffect(() => {
         let isMounted = true;
@@ -265,7 +295,10 @@
             if (error.code === 'auth/admin-restricted-operation' || error.code === 'auth/operation-not-allowed') {
               msg = '請至 Firebase 後台的 Authentication (驗證) 中，啟用「匿名 (Anonymous)」登入提供者！';
             }
-            if (isMounted) setAuthError(msg);
+            if (isMounted) {
+              setAuthError(msg);
+              setIsInitializing(false);
+            }
           }
         };
         initAuth();
@@ -376,7 +409,7 @@
               roles={allData.roles} 
               onLogin={setAppUser} 
               onGuest={() => setAppUser('guest')} 
-              onInit={() => showConfirm('確定要初始化全新資料庫並建立管理員「宇洛」嗎？', handleInitializeSystem)} 
+              onInit={() => showConfirm('確定要在 Sunset 資料夾中初始化全新庫並建立管理員「宇洛」嗎？', handleInitializeSystem)} 
               isDbConnected={!!firebaseUser}
               authError={authError}
               onRetryAuth={handleRetryAuth}
@@ -545,7 +578,7 @@
                   {/* 空資料庫初始化提示與按鈕 */}
                   {users.length === 0 && (
                     <div className="text-center py-6">
-                      <p className="text-pink-400 text-xs font-bold uppercase tracking-widest mb-4">系統尚未建立任何帳號</p>
+                      <p className="text-pink-400 text-xs font-bold uppercase tracking-widest mb-4">系統資料庫尚未建立任何帳號</p>
                       
                       {authError ? (
                         <div className="space-y-3">
@@ -560,7 +593,7 @@
                       ) : (
                         <>
                           <Button onClick={onInit} disabled={!isDbConnected} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
-                            <Shield size={16}/> {isDbConnected ? '點此初始化並建立管理員' : '等待資料庫連線中...'}
+                            <Shield size={16}/> {isDbConnected ? '點此初始化資料庫並建立管理員' : '等待資料庫連線中...'}
                           </Button>
                           {!isDbConnected && (
                             <div className="mt-4 text-[11px] text-purple-400">
@@ -1281,7 +1314,7 @@
 
               <div className="flex justify-between items-end mb-5">
                 <h3 className="text-sm font-bold text-purple-400 uppercase tracking-widest pl-2">拖曳左側可排序</h3>
-                <Input icon={Search} placeholder="搜尋現有品項..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="w-64" />
+                <Input icon={Search} placeholder="搜尋現現有品項..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className="w-64" />
               </div>
               
               <DraggableList items={sortedItems} onReorder={(l) => reorder('bar_items', l)} renderItem={item => {
