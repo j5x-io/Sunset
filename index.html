@@ -213,6 +213,7 @@
     function App() {
       const [firebaseUser, setFirebaseUser] = useState(null);
       const [isInitializing, setIsInitializing] = useState(true);
+      const [authError, setAuthError] = useState('');
 
       const [appUser, setAppUser] = useState(null); 
       const [activeTab, setActiveTab] = useState('dashboard');
@@ -329,6 +330,7 @@
 
       // --- 認證與監聽機制 (嚴格遵守 RULE 3) ---
       useEffect(() => {
+        let isMounted = true;
         const initAuth = async () => {
           try {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -339,16 +341,43 @@
           } catch (error) { 
             console.error('Auth error:', error); 
             // Fallback機制：若 Custom Token 驗證失敗，嘗試使用匿名登入
-            try { await signInAnonymously(auth); } catch (e) { console.error('Fallback Auth failed:', e); }
+            try { 
+              await signInAnonymously(auth); 
+            } catch (e) { 
+              console.error('Fallback Auth failed:', e); 
+              if (isMounted) setAuthError(e.message || 'Firebase 安全連線被拒絕');
+            }
           }
         };
         initAuth();
         const unsub = onAuthStateChanged(auth, (user) => { 
-          setFirebaseUser(user); 
-          setIsInitializing(false); 
+          if (isMounted) {
+            setFirebaseUser(user); 
+            setIsInitializing(false); 
+          }
         });
-        return () => unsub();
+        return () => { isMounted = false; unsub(); };
       }, []);
+
+      const handleRetryAuth = async () => {
+        setAuthError('');
+        setIsInitializing(true);
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (e) {
+          try {
+            await signInAnonymously(auth);
+          } catch (fallbackErr) {
+            setAuthError(fallbackErr.message || '重試連線依然失敗，請檢查網路或瀏覽器設定');
+          }
+        } finally {
+          setIsInitializing(false);
+        }
+      };
 
       useEffect(() => {
         if (!firebaseUser) return; // Guard 確保認證後才執行
@@ -438,6 +467,8 @@
               onGuest={() => setAppUser('guest')} 
               onInit={() => showConfirm('確定要初始化全新資料庫並建立管理員「宇洛」嗎？', handleInitializeSystem)} 
               isDbConnected={!!firebaseUser}
+              authError={authError}
+              onRetryAuth={handleRetryAuth}
             />
           ) : (
             <AppContext.Provider value={contextValue}>
@@ -551,7 +582,7 @@
     // VIEWS
     // ==========================================
 
-    const LoginScreen = ({ users, roles, onLogin, onGuest, onInit, isDbConnected }) => {
+    const LoginScreen = ({ users, roles, onLogin, onGuest, onInit, isDbConnected, authError, onRetryAuth }) => {
       const [selectedUser, setSelectedUser] = useState(null);
       const [password, setPassword] = useState('');
       const [showPassword, setShowPassword] = useState(false);
@@ -604,9 +635,29 @@
                   {users.length === 0 && (
                     <div className="text-center py-6">
                       <p className="text-pink-400 text-xs font-bold uppercase tracking-widest mb-4">系統尚未建立任何帳號</p>
-                      <Button onClick={onInit} disabled={!isDbConnected} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
-                        <Shield size={16}/> {isDbConnected ? '點此初始化並建立管理員' : '等待資料庫連線中...'}
-                      </Button>
+                      
+                      {authError ? (
+                        <div className="space-y-3">
+                          <div className="p-3 bg-pink-950/40 border border-pink-500/50 rounded-xl text-pink-300 text-[11px] text-left break-all shadow-inner">
+                             <span className="font-bold text-pink-400 block mb-1">連線錯誤日誌：</span>
+                             {authError}
+                          </div>
+                          <Button onClick={onRetryAuth} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
+                            <Zap size={16}/> 重新嘗試安全連線
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <Button onClick={onInit} disabled={!isDbConnected} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
+                            <Shield size={16}/> {isDbConnected ? '點此初始化並建立管理員' : '等待資料庫連線中...'}
+                          </Button>
+                          {!isDbConnected && (
+                            <div className="mt-4 text-[11px] text-purple-400">
+                              <p>若長時間卡住，請確認網路環境或<button onClick={onRetryAuth} className="text-orange-400 hover:text-orange-300 underline ml-1">點擊此處強制重試</button></p>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
                   
