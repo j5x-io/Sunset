@@ -69,31 +69,27 @@
     } from 'lucide-react';
 
     // --- Firebase Initialization ---
-    // 嚴格依賴環境變數注入配置
-    const getEnvConfig = () => {
-      if (typeof window !== 'undefined' && window.__firebase_config) return JSON.parse(window.__firebase_config);
-      if (typeof __firebase_config !== 'undefined') return JSON.parse(__firebase_config);
-      return null;
-    };
-
-    const configObj = getEnvConfig();
-    const isMissingConfig = !configObj;
-    
-    // 若無環境變數 (例如本地開啟)，則給予空殼防崩潰，並由 UI 進行阻擋提示
-    const firebaseConfig = configObj || {
-      apiKey: "invalid-key-for-local-run", authDomain: "local", projectId: "local"
+    // 使用您的專屬 Firebase 配置
+    const firebaseConfig = {
+      apiKey: "AIzaSyBZRWfUdwo8x8lnZtAEPVNRU-CKZyZTjdw",
+      authDomain: "jsvtb-48aff.firebaseapp.com",
+      projectId: "jsvtb-48aff",
+      storageBucket: "jsvtb-48aff.firebasestorage.app",
+      messagingSenderId: "1010311063638",
+      appId: "1:1010311063638:web:870c56def83e1de1df73f7",
+      measurementId: "G-VV0PYS1VP0"
     };
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    // --- 遵守 Canvas 安全路徑規範 ---
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    
-    // 使用合規的 Public Data 路徑
-    const getCollRef = (collName) => collection(db, 'artifacts', appId, 'public', 'data', collName);
-    const getDocRef = (collName, docId) => doc(db, 'artifacts', appId, 'public', 'data', collName, docId);
+    // --- 根據您的需求：將資料統一存放在 Sunset 目錄下 ---
+    // Firestore 的結構是 Collection -> Document -> Collection
+    // 我們建立一個名為 Sunset 的 Collection，裡面一個名為 main 的 Document
+    // 所有的表單 (collName) 都會作為子集合存放在這個路徑下。
+    const getCollRef = (collName) => collection(db, 'Sunset', 'main', collName);
+    const getDocRef = (collName, docId) => doc(db, 'Sunset', 'main', collName, docId);
 
     const toLocalDatetime = (isoStr) => {
       const d = new Date(isoStr);
@@ -221,20 +217,6 @@
 
     // --- Main App Component ---
     function App() {
-      if (isMissingConfig) {
-        return (
-          <div className="min-h-screen bg-[#1c0c27] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-600 rounded-full mix-blend-screen filter blur-[150px] opacity-20 pointer-events-none"></div>
-            <AlertCircle size={64} className="text-pink-500 mb-6 drop-shadow-[0_0_15px_#ec4899] z-10"/>
-            <h1 className="text-3xl font-black text-orange-100 mb-4 tracking-widest z-10 drop-shadow-md">缺少雲端資料庫金鑰</h1>
-            <p className="text-purple-300 max-w-md leading-relaxed z-10 font-bold tracking-wider">
-              系統偵測到您可能是在<span className="text-orange-400">本地端電腦上</span>直接開啟此檔案，而沒有資料庫連線權限。<br/><br/>
-              請在對話框右側的 <strong className="text-pink-400 border-b border-pink-400">Preview (預覽)</strong> 面板中檢視，系統才能自動獲取 Canvas 專屬的 API Key 進行安全連線！
-            </p>
-          </div>
-        );
-      }
-
       const [firebaseUser, setFirebaseUser] = useState(null);
       const [isInitializing, setIsInitializing] = useState(true);
       const [authError, setAuthError] = useState('');
@@ -270,111 +252,20 @@
         } catch (e) { console.error("Logging failed", e); }
       };
 
-      const handleInitializeSystem = async () => {
-        if (!firebaseUser) {
-          showAlert('系統尚未完成安全連線授權，請稍後重試。');
-          return;
-        }
-        try {
-          // 防呆：如果已經有資料則阻擋
-          if (allData.users.length > 0 || allData.roles.length > 0) {
-            showAlert('資料庫中已存在帳號資料，請勿重複初始化！');
-            return;
-          }
-
-          const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
-          
-          // 使用 addDoc 自動生成隨機 ID，避免被特定 Firestore 規則阻擋
-          const newRoleRef = await addDoc(getCollRef('bar_roles'), { 
-            name: '最高管理員', 
-            permissions: allPerms, 
-            isSystem: true 
-          });
-
-          await addDoc(getCollRef('bar_users'), { 
-            name: '宇洛', 
-            password: 'admin', 
-            role: newRoleRef.id, 
-            isSystem: true,
-            isOnline: false, 
-            lastActive: 0 
-          });
-
-          showAlert('系統初始化成功！首位管理員「宇洛」已建立，請直接點選帳號登入。');
-        } catch (err) {
-          console.error("Init Error:", err);
-          showAlert(`初始化失敗：${err.message} (UID: ${firebaseUser.uid})`);
-        }
-      };
-
-      const handleCheckout = async (orderData) => {
-        try {
-          const batch = writeBatch(db);
-          
-          const orderRef = doc(getCollRef('bar_orders'));
-          batch.set(orderRef, { ...orderData, timestamp: Date.now() });
-
-          const ingredientDeductions = {};
-          for (const item of orderData.items) {
-            if (item.recipe) {
-              for (const req of item.recipe) {
-                ingredientDeductions[req.ingredientId] = (ingredientDeductions[req.ingredientId] || 0) + (req.qty * item.qty);
-              }
-            }
-          }
-
-          for (const [ingId, consumeQty] of Object.entries(ingredientDeductions)) {
-            const dbIngredient = allData.ingredients.find(ig => ig.id === ingId);
-            if (dbIngredient) {
-              const ingRef = getDocRef('bar_ingredients', ingId);
-              const oldStocks = dbIngredient.stocks || { default: dbIngredient.stock || 0 };
-              const targetWId = orderData.warehouseId || 'default';
-              
-              const newWarehouseStock = (oldStocks[targetWId] || 0) - consumeQty;
-              const newStocks = { ...oldStocks, [targetWId]: newWarehouseStock };
-              const newTotalStock = Object.values(newStocks).reduce((a, b) => a + b, 0);
-
-              batch.update(ingRef, { stocks: newStocks, stock: newTotalStock });
-
-              const invLogRef = doc(getCollRef('bar_inventory'));
-              batch.set(invLogRef, {
-                ingredientId: ingId, ingredientName: dbIngredient.name, changeQty: -consumeQty,
-                reason: `訂單消耗 (${orderData.guestName})`, costPerItem: dbIngredient.cost || 0, 
-                warehouseId: targetWId, timestamp: Date.now()
-              });
-            }
-          }
-          await batch.commit();
-          return true;
-        } catch (error) {
-          console.error("Checkout error:", error);
-          return false;
-        }
-      };
-
-      // --- 認證與監聽機制 (嚴格遵守 RULE 3) ---
+      // --- 認證與監聽機制 ---
       useEffect(() => {
         let isMounted = true;
         const initAuth = async () => {
           try {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-              await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-              await signInAnonymously(auth);
-            }
+            // 使用您自己的 Firebase 時，透過匿名登入來取得資料庫存取權限
+            await signInAnonymously(auth);
           } catch (error) { 
             console.error('Auth error:', error); 
-            // Fallback機制：若 Custom Token 驗證失敗，嘗試使用匿名登入
-            try { 
-              await signInAnonymously(auth); 
-            } catch (e) { 
-              console.error('Fallback Auth failed:', e); 
-              let msg = e.message || 'Firebase 安全連線被拒絕';
-              if (e.code === 'auth/api-key-not-valid') {
-                msg = 'API 金鑰無效。請確認您是在 Canvas 的「Preview (預覽)」面板中開啟，系統才能掛載正確的金鑰。';
-              }
-              if (isMounted) setAuthError(msg);
+            let msg = error.message || 'Firebase 安全連線被拒絕';
+            if (error.code === 'auth/admin-restricted-operation' || error.code === 'auth/operation-not-allowed') {
+              msg = '請至 Firebase 後台的 Authentication (驗證) 中，啟用「匿名 (Anonymous)」登入提供者！';
             }
+            if (isMounted) setAuthError(msg);
           }
         };
         initAuth();
@@ -391,17 +282,9 @@
         setAuthError('');
         setIsInitializing(true);
         try {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
+          await signInAnonymously(auth);
         } catch (e) {
-          try {
-            await signInAnonymously(auth);
-          } catch (fallbackErr) {
-            setAuthError(fallbackErr.message || '重試連線依然失敗，請檢查網路或瀏覽器設定');
-          }
+          setAuthError(e.message || '重試連線依然失敗，請檢查網路或 Firebase 後台設定');
         } finally {
           setIsInitializing(false);
         }
