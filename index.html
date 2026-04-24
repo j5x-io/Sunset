@@ -70,8 +70,18 @@
 
     // --- Firebase Initialization ---
     // 嚴格依賴環境變數注入配置
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-      apiKey: "mock-key", authDomain: "mock-domain", projectId: "mock-project"
+    const getEnvConfig = () => {
+      if (typeof window !== 'undefined' && window.__firebase_config) return JSON.parse(window.__firebase_config);
+      if (typeof __firebase_config !== 'undefined') return JSON.parse(__firebase_config);
+      return null;
+    };
+
+    const configObj = getEnvConfig();
+    const isMissingConfig = !configObj;
+    
+    // 若無環境變數 (例如本地開啟)，則給予空殼防崩潰，並由 UI 進行阻擋提示
+    const firebaseConfig = configObj || {
+      apiKey: "invalid-key-for-local-run", authDomain: "local", projectId: "local"
     };
 
     const app = initializeApp(firebaseConfig);
@@ -211,6 +221,20 @@
 
     // --- Main App Component ---
     function App() {
+      if (isMissingConfig) {
+        return (
+          <div className="min-h-screen bg-[#1c0c27] flex flex-col items-center justify-center p-8 text-center relative overflow-hidden">
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-pink-600 rounded-full mix-blend-screen filter blur-[150px] opacity-20 pointer-events-none"></div>
+            <AlertCircle size={64} className="text-pink-500 mb-6 drop-shadow-[0_0_15px_#ec4899] z-10"/>
+            <h1 className="text-3xl font-black text-orange-100 mb-4 tracking-widest z-10 drop-shadow-md">缺少雲端資料庫金鑰</h1>
+            <p className="text-purple-300 max-w-md leading-relaxed z-10 font-bold tracking-wider">
+              系統偵測到您可能是在<span className="text-orange-400">本地端電腦上</span>直接開啟此檔案，而沒有資料庫連線權限。<br/><br/>
+              請在對話框右側的 <strong className="text-pink-400 border-b border-pink-400">Preview (預覽)</strong> 面板中檢視，系統才能自動獲取 Canvas 專屬的 API Key 進行安全連線！
+            </p>
+          </div>
+        );
+      }
+
       const [firebaseUser, setFirebaseUser] = useState(null);
       const [isInitializing, setIsInitializing] = useState(true);
       const [authError, setAuthError] = useState('');
@@ -345,7 +369,11 @@
               await signInAnonymously(auth); 
             } catch (e) { 
               console.error('Fallback Auth failed:', e); 
-              if (isMounted) setAuthError(e.message || 'Firebase 安全連線被拒絕');
+              let msg = e.message || 'Firebase 安全連線被拒絕';
+              if (e.code === 'auth/api-key-not-valid') {
+                msg = 'API 金鑰無效。請確認您是在 Canvas 的「Preview (預覽)」面板中開啟，系統才能掛載正確的金鑰。';
+              }
+              if (isMounted) setAuthError(msg);
             }
           }
         };
