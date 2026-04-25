@@ -14,7 +14,7 @@
   <!-- Babel for JSX compilation directly in browser -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
-  <!-- Import Maps for ES Modules (Updated to Firebase 11.6.1 to match Canvas requirements) -->
+  <!-- Import Maps for ES Modules -->
   <script type="importmap">
     {
       "imports": {
@@ -56,11 +56,11 @@
 
   <!-- React & App Logic -->
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
+    import React, { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from 'react';
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAnalytics } from 'firebase/analytics';
-    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
     import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
     import {
       Home, ShoppingCart, ListOrdered, Utensils, Package, Tags, Users, LogOut, GripVertical,
@@ -69,7 +69,6 @@
     } from 'lucide-react';
 
     // --- Firebase Initialization ---
-    // 使用您的專屬 Firebase 配置
     const firebaseConfig = {
       apiKey: "AIzaSyBZRWfUdwo8x8lnZtAEPVNRU-CKZyZTjdw",
       authDomain: "jsvtb-48aff.firebaseapp.com",
@@ -84,10 +83,7 @@
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    // --- 根據您的需求：將資料統一存放在 Sunset 目錄下 ---
-    // Firestore 的結構是 Collection -> Document -> Collection
-    // 我們建立一個名為 Sunset 的 Collection，裡面一個名為 main 的 Document
-    // 所有的表單 (collName) 都會作為子集合存放在這個路徑下。
+    // --- 根據需求：將資料統一存放在 Sunset 目錄下 ---
     const getCollRef = (collName) => collection(db, 'Sunset', 'main', collName);
     const getDocRef = (collName, docId) => doc(db, 'Sunset', 'main', collName, docId);
 
@@ -236,7 +232,6 @@
       const warehouses = systemConfig.warehouses && systemConfig.warehouses.length > 0 ? systemConfig.warehouses : [{ id: 'default', name: '主要吧台' }];
 
       const isGuest = appUser === 'guest';
-      // 改用 isSystem 屬性判斷是否為核心管理員，不再依賴寫死 ID
       const isTopAdmin = !isGuest && (appUser?.isSystem || allData.roles.find(r => r.id === appUser?.role)?.isSystem);
       const fallbackPerms = isTopAdmin ? PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {}) : { dashboard: true, pos: true };
       const userRole = isGuest ? null : allData.roles.find(r => r.id === appUser?.role) || { permissions: fallbackPerms };
@@ -252,17 +247,82 @@
         } catch (e) { console.error("Logging failed", e); }
       };
 
-      // --- 系統初始化功能 (建立管理員與核心資料夾) ---
+      // --- 核心處理結帳與庫存扣除 ---
+      const handleCheckout = useCallback(async (orderData) => {
+        if (!appUser || isGuest || !firebaseUser) return false;
+        try {
+          const batch = writeBatch(db);
+          const timestamp = Date.now();
+
+          // 1. 計算並扣除庫存
+          const usage = {};
+          orderData.items.forEach(cartItem => {
+            cartItem.recipe?.forEach(req => {
+              usage[req.ingredientId] = (usage[req.ingredientId] || 0) + (req.qty * cartItem.qty);
+            });
+          });
+
+          for (const [ingId, qty] of Object.entries(usage)) {
+            const ing = allData.ingredients.find(i => i.id === ingId);
+            if (ing) {
+              const oldTotal = ing.stock || 0;
+              const newTotal = oldTotal - qty;
+              const targetWId = orderData.warehouseId;
+              const oldStocksMap = ing.stocks || { default: oldTotal };
+              const newStocksMap = { ...oldStocksMap, [targetWId]: (oldStocksMap[targetWId] || 0) - qty };
+
+              // 更新總庫存與分區庫存
+              batch.update(getDocRef('bar_ingredients', ing.id), { 
+                stock: newTotal, 
+                stocks: newStocksMap 
+              });
+
+              // 紀錄進退貨日誌
+              const invLogRef = doc(getCollRef('bar_inventory'));
+              batch.set(invLogRef, {
+                ingredientId: ing.id,
+                ingredientName: ing.name,
+                changeQty: -qty,
+                reason: `點餐扣除: ${orderData.guestName}`,
+                costPerItem: ing.cost || 0,
+                warehouseId: targetWId,
+                timestamp
+              });
+            }
+          }
+
+          // 2. 建立訂單紀錄
+          const orderRef = doc(getCollRef('bar_orders'));
+          const orderDocData = {
+            guestName: orderData.guestName,
+            items: orderData.items,
+            subtotal: orderData.subtotal,
+            discountAmount: orderData.discount, // 對應至 orders view 所需要的 discountAmount
+            total: orderData.total,
+            totalCost: orderData.totalCost,
+            warehouseId: orderData.warehouseId,
+            activityId: orderData.activityId,
+            timestamp
+          };
+          batch.set(orderRef, orderDocData);
+
+          await batch.commit();
+          return true;
+        } catch (error) {
+          console.error("Checkout failed:", error);
+          return false;
+        }
+      }, [appUser, isGuest, firebaseUser, allData.ingredients, db]);
+
+      // --- 系統初始化功能 ---
       const handleInitializeSystem = async () => {
         try {
           const batch = writeBatch(db);
           
-          // 1. 在 Sunset/main 建立系統最高權限角色
           const roleRef = doc(getCollRef('bar_roles'));
           const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
           batch.set(roleRef, { name: '系統核心管理', permissions: allPerms, isSystem: true });
 
-          // 2. 在 Sunset/main 建立最高管理員帳號：宇洛 / admin
           const userRef = doc(getCollRef('bar_users'));
           batch.set(userRef, { 
             name: '宇洛', 
@@ -273,7 +333,6 @@
             lastActive: 0 
           });
 
-          // 3. 送出所有建立指令
           await batch.commit();
           showAlert('✅ 初始化成功！已於 Sunset 資料庫建立最高權限管理員「宇洛」。請使用密碼 admin 登入。');
         } catch (error) {
@@ -287,7 +346,6 @@
         let isMounted = true;
         const initAuth = async () => {
           try {
-            // 使用您自己的 Firebase 時，透過匿名登入來取得資料庫存取權限
             await signInAnonymously(auth);
           } catch (error) { 
             console.error('Auth error:', error); 
@@ -324,15 +382,13 @@
       };
 
       useEffect(() => {
-        if (!firebaseUser) return; // Guard 確保認證後才執行
+        if (!firebaseUser) return;
         const unsubscribers = [];
 
         const subscribe = (collName, key) => {
-          // 遵守 RULE 2: 不使用 orderBy 和 limit，全部撈出後在前端排序
           const unsub = onSnapshot(getCollRef(collName), (snapshot) => {
             let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             
-            // 針對歷史紀錄類型的資料，在記憶體中進行排序
             if (['bar_orders', 'bar_inventory', 'bar_operation_logs'].includes(collName)) {
               data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
             }
@@ -378,7 +434,7 @@
           showAlert, showConfirm, showEdit, logAction, handleCheckout,
           ingredientMap, categoryMap
         };
-      }, [allData, appUser, isGuest, userRole, systemConfig, warehouses, firebaseUser]);
+      }, [allData, appUser, isGuest, userRole, systemConfig, warehouses, firebaseUser, handleCheckout]);
 
       if (isInitializing) return <div className="min-h-screen bg-[#1c0c27] flex items-center justify-center text-orange-400 text-2xl font-bold tracking-widest drop-shadow-[0_0_10px_rgba(249,115,22,0.8)]">SYSTEM BOOTING...</div>;
 
