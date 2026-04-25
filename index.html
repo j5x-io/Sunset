@@ -314,31 +314,45 @@
         }
       }, [appUser, isGuest, firebaseUser, allData.ingredients, db]);
 
-      // --- 系統初始化功能 ---
-      const handleInitializeSystem = async () => {
-        try {
-          const batch = writeBatch(db);
-          
-          const roleRef = doc(getCollRef('bar_roles'));
-          const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
-          batch.set(roleRef, { name: '系統核心管理', permissions: allPerms, isSystem: true });
+      // --- 安全的動態系統初始化功能 ---
+      const handleInitializeSystem = () => {
+        showEdit({
+          title: '初始化系統庫與核心管理員',
+          fields: [
+            { key: 'adminName', label: '請設定最高管理員帳號', defaultValue: '' },
+            { key: 'adminPwd', label: '請設定最高管理員密碼', type: 'password', defaultValue: '' }
+          ],
+          onSave: async (v) => {
+            if (!v.adminName || !v.adminPwd) {
+              return showAlert('帳號與密碼不能為空，初始化已終止！');
+            }
+            try {
+              const batch = writeBatch(db);
+              
+              // 建立核心權限
+              const roleRef = doc(getCollRef('bar_roles'));
+              const allPerms = PERMISSION_LIST.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {});
+              batch.set(roleRef, { name: '系統核心管理', permissions: allPerms, isSystem: true });
 
-          const userRef = doc(getCollRef('bar_users'));
-          batch.set(userRef, { 
-            name: '宇洛', 
-            password: 'admin', 
-            role: roleRef.id, 
-            isSystem: true, 
-            isOnline: false, 
-            lastActive: 0 
-          });
+              // 動態寫入使用者定義的管理員，不留痕跡
+              const userRef = doc(getCollRef('bar_users'));
+              batch.set(userRef, { 
+                name: v.adminName, 
+                password: v.adminPwd, 
+                role: roleRef.id, 
+                isSystem: true, 
+                isOnline: false, 
+                lastActive: 0 
+              });
 
-          await batch.commit();
-          showAlert('✅ 初始化成功！已於 Sunset 資料庫建立最高權限管理員「宇洛」。請使用密碼 admin 登入。');
-        } catch (error) {
-          console.error("Init Error:", error);
-          showAlert('❌ 初始化失敗，請檢查資料庫連線權限：' + error.message);
-        }
+              await batch.commit();
+              showAlert(`✅ 核心資料庫初始化成功！已建立管理員「${v.adminName}」。請使用該密碼登入。`);
+            } catch (error) {
+              console.error("Init Error:", error);
+              showAlert('❌ 初始化失敗，請檢查資料庫連線權限：' + error.message);
+            }
+          }
+        });
       };
 
       // --- 認證與監聽機制 ---
@@ -465,7 +479,7 @@
               roles={allData.roles} 
               onLogin={setAppUser} 
               onGuest={() => setAppUser('guest')} 
-              onInit={() => showConfirm('確定要在 Sunset 資料夾中初始化全新庫並建立管理員「宇洛」嗎？', handleInitializeSystem)} 
+              onInit={() => showConfirm('警告：這將在資料庫中初始化全新權限結構。確定要繼續嗎？', handleInitializeSystem)} 
               isDbConnected={!!firebaseUser}
               authError={authError}
               onRetryAuth={handleRetryAuth}
@@ -649,7 +663,7 @@
                       ) : (
                         <>
                           <Button onClick={onInit} disabled={!isDbConnected} className="w-full text-sm shadow-[0_0_20px_rgba(249,115,22,0.4)]">
-                            <Shield size={16}/> {isDbConnected ? '點此初始化資料庫並建立管理員' : '等待資料庫連線中...'}
+                            <Shield size={16}/> {isDbConnected ? '初始化安全資料庫' : '等待資料庫連線中...'}
                           </Button>
                           {!isDbConnected && (
                             <div className="mt-4 text-[11px] text-purple-400">
@@ -1858,7 +1872,7 @@
       };
 
       const edit = (u) => {
-        const isSys = u.isSystem || u.name === '宇洛';
+        const isSys = u.isSystem; // 現在只依賴 isSystem，不再比對名稱
         showEdit({
           title: isSys ? '編輯核心管理員' : '更新帳號配置',
           fields: isSys ? [{ key: 'p', label: '安全密碼', defaultValue: u.password }] : [ { key: 'n', label: '名稱', defaultValue: u.name }, { key: 'p', label: '密碼', defaultValue: u.password }, { key: 'r', label: '職位', type: 'select', defaultValue: u.role, options: roles.map(r=>({value:r.id, label:r.name})) } ],
@@ -1871,7 +1885,12 @@
           }
         });
       };
-      const del = (id, n, isSys) => { if(isSys || n === '宇洛')return showAlert("拒絕存取：無法刪除核心帳號"); showConfirm(`刪除 ${n}?`, () => { deleteDoc(getDocRef('bar_users', id)); logAction('刪除帳號', n); }); };
+      
+      // 禁止刪除任何帶有 isSystem 標籤的帳號，移除「宇洛」硬編碼檢查
+      const del = (id, n, isSys) => { 
+        if(isSys) return showAlert("拒絕存取：無法刪除核心系統帳號"); 
+        showConfirm(`刪除 ${n}?`, () => { deleteDoc(getDocRef('bar_users', id)); logAction('刪除帳號', n); }); 
+      };
 
       return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
@@ -1900,7 +1919,7 @@
                   </div>
                   <div className="flex flex-col gap-2 flex-shrink-0">
                     <button onClick={()=>edit(u)} className="p-2 bg-[#1c0c27]/80 hover:bg-yellow-500/10 text-purple-400 hover:text-yellow-400 rounded-lg transition-colors border border-purple-900/30"><Edit size={16}/></button>
-                    {(!u.isSystem && u.name !== '宇洛') && <button onClick={()=>del(u.id, u.name, u.isSystem)} className="p-2 bg-[#1c0c27]/80 hover:bg-pink-900/30 text-purple-400 hover:text-pink-500 rounded-lg transition-colors border border-purple-900/30"><Trash2 size={16}/></button>}
+                    {!u.isSystem && <button onClick={()=>del(u.id, u.name, u.isSystem)} className="p-2 bg-[#1c0c27]/80 hover:bg-pink-900/30 text-purple-400 hover:text-pink-500 rounded-lg transition-colors border border-purple-900/30"><Trash2 size={16}/></button>}
                   </div>
                 </div>
               ))}
