@@ -65,7 +65,7 @@
     import {
       Home, ShoppingCart, ListOrdered, Utensils, Package, Tags, Users, LogOut, GripVertical,
       Plus, Trash2, Edit, Check, X, Clock, Play, Square, DollarSign, TrendingUp, AlertCircle, Activity,
-      Settings, Download, Upload, FileJson, ChevronLeft, ChevronRight, BarChart2, Calendar, Trophy, History, Sliders, Shield, Search, AlertTriangle, Zap, Calculator, ImageIcon, Copy, FileSpreadsheet, Warehouse, Eye, EyeOff, Moon, Sunset
+      Settings, Download, Upload, FileJson, ChevronLeft, ChevronRight, BarChart2, Calendar, Trophy, History, Sliders, Shield, Search, AlertTriangle, Zap, Calculator, ImageIcon, Copy, FileSpreadsheet, Warehouse, Eye, EyeOff, Moon, Sunset, Key
     } from 'lucide-react';
 
     // --- Firebase Initialization ---
@@ -245,6 +245,37 @@
         try {
           await addDoc(getCollRef('bar_operation_logs'), { userName: appUser.name, action, details, timestamp: Date.now() });
         } catch (e) { console.error("Logging failed", e); }
+      };
+
+      // --- 個人密碼修改功能 ---
+      const handleChangePassword = () => {
+        if (isGuest) return showAlert('遊客模式無法修改個人密碼。');
+        
+        setDialog({
+          type: 'edit',
+          title: '修改個人密碼',
+          fields: [
+            { key: 'oldPwd', label: '目前密碼', type: 'password', defaultValue: '' },
+            { key: 'newPwd', label: '新密碼 (最少4碼)', type: 'password', defaultValue: '' },
+            { key: 'confirmPwd', label: '確認新密碼', type: 'password', defaultValue: '' }
+          ],
+          onSave: async (v) => {
+            const currentUser = allData.users.find(u => u.id === appUser.id);
+            if (!currentUser) return showAlert('系統錯誤：找不到使用者資料');
+            if (v.oldPwd !== currentUser.password) return showAlert('密碼修改失敗：目前密碼輸入錯誤！');
+            if (v.newPwd !== v.confirmPwd) return showAlert('密碼修改失敗：兩次輸入的新密碼不一致！');
+            if (v.newPwd.length < 4) return showAlert('密碼修改失敗：新密碼長度過短！');
+
+            try {
+              await updateDoc(getDocRef('bar_users', appUser.id), { password: v.newPwd });
+              logAction('修改密碼', `${appUser.name} 變更了個人登入密碼`);
+              setAppUser(prev => ({ ...prev, password: v.newPwd }));
+              showAlert('✅ 密碼修改成功！下次登入請使用新密碼。');
+            } catch (e) {
+              showAlert('❌ 密碼修改失敗：' + e.message);
+            }
+          }
+        });
       };
 
       // --- 核心處理結帳與庫存扣除 ---
@@ -537,9 +568,16 @@
                         <p className="text-sm font-black text-orange-100 group-hover:text-orange-300 tracking-wider transition-colors">{isGuest ? '遊客模式' : appUser.name}</p>
                         <p className="text-[10px] text-pink-400 uppercase tracking-widest">{isGuest ? '僅供預覽' : (allData.roles.find(r => r.id === appUser.role)?.name || '未知權限')}</p>
                       </div>
-                      <button onClick={logout} className="text-purple-400 hover:text-orange-400 hover:bg-orange-500/10 p-2 rounded-lg transition-all" title="登出">
-                        <LogOut size={18} />
-                      </button>
+                      <div className="flex gap-1">
+                        {!isGuest && (
+                          <button onClick={handleChangePassword} className="text-purple-400 hover:text-orange-400 hover:bg-orange-500/10 p-2 rounded-lg transition-all" title="修改個人密碼">
+                            <Key size={18} />
+                          </button>
+                        )}
+                        <button onClick={logout} className="text-purple-400 hover:text-orange-400 hover:bg-orange-500/10 p-2 rounded-lg transition-all" title="登出">
+                          <LogOut size={18} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </aside>
